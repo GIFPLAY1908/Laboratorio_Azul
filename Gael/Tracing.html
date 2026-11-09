@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laboratorio Render: Scanline vs Ray Tracing</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #111;
+            font-family: system-ui, sans-serif;
+        }
+        
+        #scanline-overlay {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0,0,0,0.4) 50%,
+                rgba(0,0,0,0.4)
+            );
+            background-size: 100% 4px;
+            z-index: 10;
+            box-shadow: inset 0 0 100px rgba(0,0,0,0.8);
+            display: none;
+        }
+
+        #ui {
+            position: absolute;
+            bottom: 20px; left: 20px;
+            color: #a8a29e;
+            font-family: monospace;
+            z-index: 20;
+            text-shadow: 1px 1px 2px #000;
+            pointer-events: none;
+        }
+
+        #panel {
+            position: absolute;
+            top: 20px; left: 20px;
+            background: rgba(30,30,30,0.9);
+            color: #eee;
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid #444;
+            z-index: 30;
+            width: 320px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+
+        h3 { margin-top: 0; color: #a7c957; border-bottom: 1px solid #444; padding-bottom: 8px; }
+        select, button { background: #333; color: #fff; border: 1px solid #555; padding: 5px; border-radius: 4px; margin-top: 5px; cursor: pointer; }
+        select:hover, button:hover { background: #444; }
+        kbd { background: #333; border: 1px solid #555; border-radius: 3px; padding: 2px 6px; font-size: 12px;}
+        table { border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 12px; }
+        td, th { border: 1px solid #444; padding: 4px; text-align: center; }
+        th { background: #333; color: #fff; }
+        .ok { color: #7f7; font-weight: bold; }
+        .btn-clear { width: 100%; margin-top: 10px; background: #552222; border-color: #883333; }
+        .btn-clear:hover { background: #773333; }
+    </style>
+</head>
+<body>
+
+    <div id="scanline-overlay"></div>
+    
+    <div id="ui">
+        <p id="ui-title"><strong>RASTERIZACIÓN + Z-BUFFER</strong></p>
+        <p id="ui-desc">Sombreado: Flat | Cámara: Perspectiva | Luz: Direccional</p>
+    </div>
+
+    <div id="panel">
+        <h3>Laboratorio de Render</h3>
+        <p>
+            <label for="modo">Técnica:</label>
+            <select id="modo">
+                <option value="scanline">Scanline (Three.js)</option>
+                <option value="raytracing">Ray Tracing (JS)</option>
+            </select>
+        </p>
+        <p><kbd>S</kbd> sombras on/off &nbsp; <kbd>R</kbd> resolución</p>
+        <p id="info">Cargando...</p>
+        <table id="tabla">
+            <tr><th>Modo</th><th>Res.</th><th>Sombras</th><th>ms</th></tr>
+        </table>
+        <button class="btn-clear" onclick="document.getElementById('tabla').innerHTML='<tr><th>Modo</th><th>Res.</th><th>Sombras</th><th>ms</th></tr>'">Limpiar Tabla</button>
+    </div>
+
+    <canvas id="rt-canvas" width="320" height="200" style="display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:#000; border:2px solid #333; border-radius:8px; z-index:5; image-rendering:pixelated; width:640px; height:400px;"></canvas>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // ==========================================
+        // VARIABLES GLOBALES
+        // ==========================================
+        let modoActual = 'scanline';
+        let sombrasGlobal = true;
+        let escalaRT = 1;
+        let frameCount = 0; // Para no saturar la tabla
+
+        const overlay = document.getElementById('scanline-overlay');
+        const rtCanvas = document.getElementById('rt-canvas');
+        const uiTitle = document.getElementById('ui-title');
+        const uiDesc = document.getElementById('ui-desc');
+
+        // ==========================================
+        // 1. ESCENA THREE.JS (SCANLINE)
+        // ==========================================
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x222222);
+        scene.fog = new THREE.FogExp2(0x222222, 0.03);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 3, 10);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true; 
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 1.5, 0);
+        controls.enableDamping = true;
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(5, 10, 5);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        const matCuerpo = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
+        const matRosa = new THREE.MeshLambertMaterial({ color: 0xe8a1c1, flatShading: true });
+        const matMorado = new THREE.MeshLambertMaterial({ color: 0x6b1d45, flatShading: true });
+
+        const floorGeo = new THREE.PlaneGeometry(50, 50);
+        const floorMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a, flatShading: true });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.receiveShadow = true;
+        scene.add(floor);
+
+        const personaje = new THREE.Group();
+        const cuerpoGeo = new THREE.ConeGeometry(1, 2.5, 6);
+        const cuerpo = new THREE.Mesh(cuerpoGeo, matMorado);
+        cuerpo.position.y = 1.25; cuerpo.castShadow = true; personaje.add(cuerpo);
+
+        const cabezaGeo = new THREE.SphereGeometry(1, 6, 5);
+        const cabeza = new THREE.Mesh(cabezaGeo, matCuerpo);
+        cabeza.position.y = 3; cabeza.castShadow = true; personaje.add(cabeza);
+
+        const cuernoGeo = new THREE.ConeGeometry(0.3, 1.5, 4);
+        const cuernoIzq = new THREE.Mesh(cuernoGeo, matRosa);
+        cuernoIzq.position.set(-0.6, 4, 0); cuernoIzq.rotation.z = Math.PI / 4; cuernoIzq.castShadow = true;
+        const cuernoDer = new THREE.Mesh(cuernoGeo, matRosa);
+        cuernoDer.position.set(0.6, 4, 0); cuernoDer.rotation.z = -Math.PI / 4; cuernoDer.castShadow = true;
+        personaje.add(cuernoIzq, cuernoDer);
+
+        const alaGeo = new THREE.ConeGeometry(1, 2.5, 4);
+        const alaIzq = new THREE.Mesh(alaGeo, matRosa);
+        alaIzq.position.set(-1.2, 2, 0); alaIzq.rotation.z = Math.PI / 2.5; alaIzq.scale.set(0.2, 1, 1); alaIzq.castShadow = true;
+        const alaDer = new THREE.Mesh(alaGeo, matRosa);
+        alaDer.position.set(1.2, 2, 0); alaDer.rotation.z = -Math.PI / 2.5; alaDer.scale.set(0.2, 1, 1); alaDer.castShadow = true;
+        personaje.add(alaIzq, alaDer);
+
+        scene.add(personaje);
+
+        // ==========================================
+        // 2. ESCENA RAY TRACING
+        // ==========================================
+        const rtCtx = rtCanvas.getContext('2d');
+        
+        const sub = (a,b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]];
+        const add = (a,b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]];
+        const mul = (a,s) => [a[0]*s, a[1]*s, a[2]*s];
+        const dot = (a,b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+        const norm = (a) => { const l = Math.hypot(a[0],a[1],a[2]); return l > 0 ? [a[0]/l, a[1]/l, a[2]/l] : [0,0,0]; };
+        const reflect = (d, n) => sub(d, mul(n, 2 * dot(d, n)));
+
+        const COL = {
+            blanco: [0.95, 0.95, 0.95], rosaClaro: [0.95, 0.75, 0.85],
+            rosaOscuro: [0.70, 0.20, 0.40], moradoOjo: [0.50, 0.10, 0.25],
+            hoja: [0.20, 0.40, 0.20], suelo: [0.25, 0.30, 0.25], cielo: [0.05, 0.10, 0.15]
+        };
+
+        const escenaRT = {
+            esferas: [
+                { c:[0.0, 0.5, 4.0], r:0.6, color: COL.blanco, reflectividad: 0.2 },
+                { c:[-0.25, 0.55, 3.5], r:0.12, color: COL.moradoOjo, reflectividad: 0.6 },
+                { c:[ 0.25, 0.55, 3.5], r:0.12, color: COL.moradoOjo, reflectividad: 0.6 },
+                { c:[0.0, -0.3, 4.0], r:0.3, color: COL.rosaOscuro, reflectividad: 0.1 },
+                { c:[-0.4, 1.2, 4.0], r:0.15, color: COL.rosaClaro, reflectividad: 0.1 },
+                { c:[ 0.4, 1.2, 4.0], r:0.15, color: COL.rosaClaro, reflectividad: 0.1 },
+                { c:[-3.0, 1.5, 8.0], r:1.5, color: COL.hoja, reflectividad: 0.0 },
+                { c:[ 3.0, 1.0, 7.0], r:1.2, color: COL.hoja, reflectividad: 0.0 },
+                { c:[ 0.0, 2.5, 12.0], r:2.5, color: COL.hoja, reflectividad: 0.0 }
+            ],
+            pisoY: -1.0,
+            luz: norm([-1, 2, -1.5])
+        };
+
+        function intersectaEsfera(o, d, e){
+            const oc = sub(o, e.c); const b = dot(d, oc); const k = dot(oc, oc) - e.r * e.r;
+            const disc = b * b - k; if (disc < 0) return Infinity;
+            let t = -b - Math.sqrt(disc); if (t < 1e-3) t = -b + Math.sqrt(disc);
+            return t > 1e-3 ? t : Infinity;
+        }
+        function intersectaPiso(o, d){
+            if (Math.abs(d[1]) < 1e-6) return Infinity;
+            const t = (escenaRT.pisoY - o[1]) / d[1];
+            return t > 1e-3 ? t : Infinity;
+        }
+        function trazar(o, d){
+            let mejor = { t: Infinity };
+            for (const e of escenaRT.esferas){
+                const t = intersectaEsfera(o, d, e);
+                if (t < mejor.t){ const p = add(o, mul(d, t)); mejor = { t, p, n: norm(sub(p, e.c)), color: e.color, reflectividad: e.reflectividad }; }
+            }
+            const tp = intersectaPiso(o, d);
+            if (tp < mejor.t){
+                const p = add(o, mul(d, tp));
+                const cuadro = (Math.floor(p[0]*2) + Math.floor(p[2]*2)) & 1;
+                mejor = { t: tp, p, n: [0, 1, 0], color: cuadro ? COL.suelo : mul(COL.suelo, 0.7), reflectividad: 0.3 };
+            }
+            return mejor;
+        }
+        function enSombra(p, n){
+            const origen = add(p, mul(n, 1e-3));
+            for (const e of escenaRT.esferas) { if (intersectaEsfera(origen, escenaRT.luz, e) < Infinity) return true; }
+            if (intersectaPiso(origen, escenaRT.luz) < Infinity) return true;
+            return false;
+        }
+        function sombrear(h, d, profundidad) {
+            if (h.t === Infinity) return COL.cielo;
+            let lambert = Math.max(0, dot(h.n, escenaRT.luz));
+            if (sombrasGlobal && lambert > 0 && enSombra(h.p, h.n)) lambert = 0;
+            let colorFinal = mul(h.color, 0.2 + 0.8 * lambert);
+            if (profundidad < 2 && h.reflectividad > 0) {
+                const reflejoDir = reflect(d, h.n);
+                const hitReflejo = trazar(add(h.p, mul(h.n, 1e-3)), reflejoDir);
+                let colorReflejado = COL.cielo;
+                if (hitReflejo.t < Infinity) {
+                   let lRef = Math.max(0, dot(hitReflejo.n, escenaRT.luz));
+                   colorReflejado = mul(hitReflejo.color, 0.2 + 0.8 * lRef);
+                }
+                colorFinal = add(mul(colorFinal, 1 - h.reflectividad), mul(colorReflejado, h.reflectividad));
+            }
+            return colorFinal;
+        }
+
+        function renderRayTracing(){
+            const W = rtCanvas.width, H = rtCanvas.height, img = rtCtx.createImageData(W, H);
+            const ojo = [0, 0.2, -1], fov = 1.2;
+            for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+                const u = (2*(x+0.5)/W - 1) * fov * W/H;
+                const v = (1 - 2*(y+0.5)/H) * fov;
+                const dir = norm([u, v, 1.5]);
+                const hit = trazar(ojo, dir);
+                const col = sombrear(hit, dir, 0);
+                const i = 4*(y*W + x);
+                img.data[i] = Math.min(255, col[0]*255); img.data[i+1] = Math.min(255, col[1]*255);
+                img.data[i+2] = Math.min(255, col[2]*255); img.data[i+3] = 255;
+            }
+            rtCtx.putImageData(img, 0, 0);
+        }
+
+        // ==========================================
+        // 3. CONTROL DE UI Y MEDICIÓN (CORREGIDO)
+        // ==========================================
+        function actualizarUI(ms, res) {
+            document.getElementById('info').innerHTML = 
+                `<b>${modoActual === 'scanline' ? 'Scanline' : 'Ray Tracing'}</b> · ${res} · sombras: ${sombrasGlobal?'sí':'no'} · <span class="ok">${ms} ms</span>`;
+            
+            // SOLO agregamos una fila si NO estamos en el bucle de animación (o si es forzado)
+            document.getElementById('tabla').insertAdjacentHTML('beforeend',
+                `<tr><td>${modoActual === 'scanline' ? 'Rasterización' : 'Ray Tracing'}</td><td>${res}</td><td>${sombrasGlobal?'Sí':'No'}</td><td>${ms}</td></tr>`);
+        }
+
+        function cambiarModo() {
+            modoActual = document.getElementById('modo').value;
+            
+            if (modoActual === 'scanline') {
+                renderer.domElement.style.display = 'block';
+                rtCanvas.style.display = 'none';
+                overlay.style.display = 'block';
+                uiTitle.innerHTML = '<strong>RASTERIZACIÓN + Z-BUFFER</strong>';
+                uiDesc.innerHTML = 'Sombreado: Flat | Cámara: Perspectiva | Luz: Direccional';
+                controls.enabled = true;
+                medirYRenderizar('scanline');
+            } else {
+                renderer.domElement.style.display = 'none';
+                rtCanvas.style.display = 'block';
+                overlay.style.display = 'none';
+                uiTitle.innerHTML = '<strong>RAY TRACING (JS)</strong>';
+                uiDesc.innerHTML = 'Rayos primarios | Intersección Esferas/Plano | Sombras | Reflejos';
+                controls.enabled = false;
+                medirYRenderizar('raytracing');
+            }
+        }
+
+        function medirYRenderizar(tipo) {
+            const t0 = performance.now();
+            
+            if (tipo === 'scanline') {
+                renderer.render(scene, camera);
+            } else {
+                renderRayTracing();
+            }
+            
+            const ms = (performance.now() - t0).toFixed(2);
+            const res = tipo === 'scanline' ? `${renderer.domElement.width}×${renderer.domElement.height}` : `${rtCanvas.width}×${rtCanvas.height}`;
+            
+            // Solo actualizamos la tabla cuando se llama manualmente
+            actualizarUI(ms, res);
+        }
+
+        // Eventos
+        document.getElementById('modo').addEventListener('change', cambiarModo);
+
+        window.addEventListener('keydown', ev => {
+            if (ev.key === 's' || ev.key === 'S') {
+                sombrasGlobal = !sombrasGlobal;
+                renderer.shadowMap.enabled = sombrasGlobal;
+                scene.traverse((node) => { if (node.isMesh) node.material.needsUpdate = true; });
+                medirYRenderizar(modoActual);
+            }
+            else if (ev.key === 'r' || ev.key === 'R') {
+                if (modoActual === 'scanline') {
+                    // Simulamos un cambio de resolución reiniciando el render
+                    renderer.setSize(window.innerWidth, window.innerHeight);
+                } else {
+                    escalaRT = escalaRT === 1 ? 2 : 1;
+                    rtCanvas.width = 320 * escalaRT;
+                    rtCanvas.height = 200 * escalaRT;
+                }
+                medirYRenderizar(modoActual);
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        const clock = new THREE.Clock();
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Solo animamos Three.js si estamos en modo Scanline
+            if (modoActual === 'scanline') {
+                const time = clock.getElapsedTime();
+                personaje.position.y = Math.sin(time * 2) * 0.1;
+                personaje.rotation.y = Math.sin(time * 0.5) * 0.3;
+                controls.update();
+                
+                // Renderizamos sin medir en el bucle (para no saturar la tabla)
+                renderer.render(scene, camera);
+            }
+        }
+
+        // Iniciar
+        animate();
+        cambiarModo(); // Carga inicial (esto sí mide y agrega a la tabla)
+
+    </script>
+</body>
+</html>
