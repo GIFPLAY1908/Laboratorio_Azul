@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Escena Base: Rasterización, Z-Buffer y Scanline</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #111;
+        }
+        
+        /* 1. EFECTO SCANLINE (Capa CSS sobre el canvas) */
+        #scanline-overlay {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0,0,0,0.4) 50%,
+                rgba(0,0,0,0.4)
+            );
+            background-size: 100% 4px;
+            z-index: 10;
+            box-shadow: inset 0 0 100px rgba(0,0,0,0.8); /* Viñeta CRT */
+        }
+
+        #ui {
+            position: absolute;
+            bottom: 20px; left: 20px;
+            color: #a8a29e;
+            font-family: monospace;
+            z-index: 20;
+            text-shadow: 1px 1px 2px #000;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="scanline-overlay"></div>
+    <div id="ui">
+        <p><strong>RASTERIZACIÓN + Z-BUFFER</strong></p>
+        <p>Sombreado: Flat | Cámara: Perspectiva | Luz: Direccional</p>
+    </div>
+
+    <!-- Importar Three.js (Motor de Rasterización por GPU) -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // ==========================================
+        // 1. ESCENA BASE: CÁMARA
+        // ==========================================
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x222222);
+        scene.fog = new THREE.FogExp2(0x222222, 0.03); // Niebla para profundidad
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 3, 10);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: false }); // Antialias off para look retro
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true; // Activa el Z-Buffer para sombras
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 1.5, 0);
+        controls.enableDamping = true;
+
+        // ==========================================
+        // 2. ESCENA BASE: LUCES
+        // ==========================================
+        // Luz ambiental (para que no haya zonas 100% negras)
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+
+        // Luz direccional (crea el Sombreado Plano y las sombras del Z-Buffer)
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(5, 10, 5);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // ==========================================
+        // 3. ESCENA BASE: OBJETOS (Geometría Low-Poly)
+        // ==========================================
+        
+        // Material con SOMBREADO PLANO (Flat Shading) y colores de Yahu
+        const matCuerpo = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
+        const matRosa = new THREE.MeshLambertMaterial({ color: 0xe8a1c1, flatShading: true });
+        const matMorado = new THREE.MeshLambertMaterial({ color: 0x6b1d45, flatShading: true });
+
+        // Suelo
+        const floorGeo = new THREE.PlaneGeometry(50, 50);
+        const floorMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a, flatShading: true });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.receiveShadow = true;
+        scene.add(floor);
+
+        // Grupo del Personaje
+        const personaje = new THREE.Group();
+
+        // Cuerpo (Cono de 6 caras para que se vea el sombreado plano)
+        const cuerpoGeo = new THREE.ConeGeometry(1, 2.5, 6);
+        const cuerpo = new THREE.Mesh(cuerpoGeo, matMorado);
+        cuerpo.position.y = 1.25;
+        cuerpo.castShadow = true;
+        personaje.add(cuerpo);
+
+        // Cabeza (Esfera de pocos segmentos)
+        const cabezaGeo = new THREE.SphereGeometry(1, 6, 5);
+        const cabeza = new THREE.Mesh(cabezaGeo, matCuerpo);
+        cabeza.position.y = 3;
+        cabeza.castShadow = true;
+        personaje.add(cabeza);
+
+        // Cuernos
+        const cuernoGeo = new THREE.ConeGeometry(0.3, 1.5, 4);
+        const cuernoIzq = new THREE.Mesh(cuernoGeo, matRosa);
+        cuernoIzq.position.set(-0.6, 4, 0);
+        cuernoIzq.rotation.z = Math.PI / 4;
+        cuernoIzq.castShadow = true;
+        
+        const cuernoDer = new THREE.Mesh(cuernoGeo, matRosa);
+        cuernoDer.position.set(0.6, 4, 0);
+        cuernoDer.rotation.z = -Math.PI / 4;
+        cuernoDer.castShadow = true;
+
+        personaje.add(cuernoIzq);
+        personaje.add(cuernoDer);
+
+        // Alas laterales
+        const alaGeo = new THREE.ConeGeometry(1, 2.5, 4);
+        const alaIzq = new THREE.Mesh(alaGeo, matRosa);
+        alaIzq.position.set(-1.2, 2, 0);
+        alaIzq.rotation.z = Math.PI / 2.5;
+        alaIzq.scale.set(0.2, 1, 1);
+        alaIzq.castShadow = true;
+        personaje.add(alaIzq);
+
+        const alaDer = new THREE.Mesh(alaGeo, matRosa);
+        alaDer.position.set(1.2, 2, 0);
+        alaDer.rotation.z = -Math.PI / 2.5;
+        alaDer.scale.set(0.2, 1, 1);
+        alaDer.castShadow = true;
+        personaje.add(alaDer);
+
+        scene.add(personaje);
+
+        // ==========================================
+        // 4. BUCLE DE RENDERIZADO (RASTERIZACIÓN)
+        // ==========================================
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const time = clock.getElapsedTime();
+
+            // Animación flotante
+            personaje.position.y = Math.sin(time * 2) * 0.1;
+            personaje.rotation.y = Math.sin(time * 0.5) * 0.3;
+
+            controls.update();
+            
+            // El motor de Three.js hace la Rasterización y aplica el Z-Buffer automáticamente aquí
+            renderer.render(scene, camera);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
