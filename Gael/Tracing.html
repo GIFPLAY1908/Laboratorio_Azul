@@ -3,30 +3,92 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Yahu en el bosque - Ray Tracing</title>
+<title>Yahu en el bosque - Comparación de Rendimiento</title>
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
   body { background: #18251d; font-family: system-ui, Arial, sans-serif; }
   #view { display:block; width:100%; height:100%; }
+
   #controls {
     position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
     display:flex; flex-wrap:wrap; justify-content:center; gap:9px;
-    width:min(96%, 760px); padding:10px; border-radius:12px;
-    background:rgba(12,20,16,.82); border:1px solid rgba(255,255,255,.22);
+    width:min(96%, 920px); padding:10px; border-radius:12px;
+    background:rgba(12,20,16,.88); border:1px solid rgba(255,255,255,.22);
     backdrop-filter: blur(6px);
   }
-  button {
+  button, select {
     border:1px solid #8ca98d; border-radius:8px; padding:10px 14px;
     color:#f5fff4; background:#304b35; font-weight:600; cursor:pointer;
     transition: background 0.2s, border-color 0.2s;
+    font-size: 13px;
   }
+  select { background:#1e3324; }
   button.active { background:#8b3f69; border-color:#f2bfd9; }
-  button:hover { filter:brightness(1.15); }
-  #status { width:100%; text-align:center; color:#e6eee2; font-size:12px; }
+  button:hover, select:hover { filter:brightness(1.15); }
+  button:disabled { opacity: .6; cursor: wait; }
+  #status { width:100%; text-align:center; color:#e6eee2; font-size:11px; opacity:.85; }
+
+  #metrics {
+    position: fixed; top: 12px; right: 12px;
+    width: 340px; padding: 14px;
+    background: rgba(12,20,16,.93); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 12px; color: #e6eee2; font-size: 12px;
+    backdrop-filter: blur(6px);
+    max-height: calc(100vh - 120px); overflow-y: auto;
+  }
+  #metrics h3 {
+    margin: 0 0 8px; font-size: 13px; color: #f2bfd9;
+    border-bottom: 1px solid rgba(255,255,255,.15); padding-bottom: 6px;
+  }
+  #metrics table { width: 100%; border-collapse: collapse; }
+  #metrics th, #metrics td { padding: 4px 6px; text-align: right; font-size: 11px; }
+  #metrics th { color: #a9cfc1; font-weight: 600; text-align: left; }
+  #metrics td:first-child { text-align: left; }
+  #metrics tr:nth-child(even) { background: rgba(255,255,255,.05); }
+  #metrics .rt { color: #f2bfd9; }
+  #metrics .rs { color: #8ec9a0; }
+  #metrics .highlight { font-weight: 700; color: #fff; }
+  #metrics .note { margin-top: 8px; font-size: 10px; opacity: 0.75; line-height: 1.4; }
+
+  #readmeBtn {
+    position: fixed; top: 12px; left: 12px;
+    padding: 8px 14px; border-radius: 8px;
+    background: #801a40; border: 1px solid #f2bfd9; color: #fff;
+    font-weight: 600; cursor: pointer; font-size: 13px;
+  }
+  #readmeBtn:hover { filter: brightness(1.2); }
+
+  #readmeModal {
+    display: none; position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,.75); overflow-y: auto; padding: 20px;
+  }
+  #readmeModal .content {
+    max-width: 780px; margin: 30px auto; padding: 28px;
+    background: #1e3324; border: 1px solid rgba(255,255,255,.25);
+    border-radius: 14px; color: #e6eee2; line-height: 1.6; font-size: 14px;
+  }
+  #readmeModal h2 { color: #f2bfd9; margin-top: 0; }
+  #readmeModal h3 { color: #a9cfc1; margin-top: 20px; }
+  #readmeModal table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+  #readmeModal th, #readmeModal td {
+    padding: 8px 12px; text-align: left; border-bottom: 1px solid rgba(255,255,255,.12);
+  }
+  #readmeModal th { color: #f2bfd9; font-size: 12px; }
+  #readmeModal code {
+    background: #0d1a11; padding: 2px 6px; border-radius: 4px;
+    font-family: monospace; font-size: 12px;
+  }
+  #readmeModal .close {
+    float: right; background: #8b3f69; border: none;
+    color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  }
+  #readmeModal ul { padding-left: 20px; }
+  #readmeModal li { margin: 4px 0; }
+
   #error {
     display:none; position:fixed; top:12px; left:12px; right:12px;
-    padding:12px; border-radius:8px; background:#fff; color:#222;
+    padding:12px; border-radius:8px; background:#fff; color:#222; z-index: 200;
   }
 </style>
 <script type="importmap">
@@ -36,11 +98,97 @@
 <body>
 <canvas id="view"></canvas>
 <div id="error">No se pudo cargar Three.js. Comprueba tu conexión y abre el archivo con Live Server.</div>
+
+<button id="readmeBtn">📖 README / Comparativa</button>
+
+<div id="metrics">
+  <h3>⏱️ Medición de Rendimiento</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Técnica</th>
+        <th>Resolución</th>
+        <th>Media</th>
+        <th>FPS</th>
+      </tr>
+    </thead>
+    <tbody id="metricsBody">
+      <tr><td colspan="4" style="text-align:center;opacity:.6;">Pulsa "Medir" para comparar</td></tr>
+    </tbody>
+  </table>
+  <div class="note" id="metricsNote">
+    Se descarta el primer frame (calentamiento) y se promedian 5 frames por técnica.
+  </div>
+</div>
+
 <div id="controls">
   <button id="mode" class="active">Modo: Ray Tracing</button>
-  <button id="shadows" class="active">Sombras: activadas</button>
-  <button id="reflections" class="active">Reflejos: activados</button>
-  <div id="status">Rayos primarios · Intersección con esferas y plano · Sombras · Un rebote de reflexión</div>
+  <button id="shadows" class="active">Sombras: on</button>
+  <button id="reflections" class="active">Reflejos: on</button>
+  <select id="rtRes">
+    <option value="160x100">RT: 160×100</option>
+    <option value="320x200" selected>RT: 320×200</option>
+    <option value="480x300">RT: 480×300</option>
+    <option value="640x400">RT: 640×400</option>
+  </select>
+  <button id="measureBtn">📊 Medir</button>
+  <div id="status">Rayos primarios · Intersección · Sombras · Un rebote de reflexión</div>
+</div>
+
+<div id="readmeModal">
+  <div class="content">
+    <button class="close" id="closeReadme">✕ Cerrar</button>
+    <h2>📖 Comparativa: Ray Tracing (CPU) vs Rasterización (GPU)</h2>
+    <p>Esta escena de <b>Yahu en el bosque</b> implementa dos técnicas de renderizado y permite compararlas en tiempo real con medición de rendimiento.</p>
+
+    <h3>🔍 Técnicas</h3>
+    <ul>
+      <li><b>Ray Tracing (CPU):</b> Cada píxel lanza un rayo primario desde la cámara. Se comprueban intersecciones con esferas y plano, se calculan sombras (rayos de oclusión hacia la luz) y un rebote de reflexión. Se renderiza en un canvas 2D de baja resolución que luego se escala con <code>NearestFilter</code> (pixelado).</li>
+      <li><b>Rasterización (GPU):</b> Three.js/WebGL dibuja la misma escena con mallas, materiales <code>MeshStandardMaterial</code>, sombras PCF suaves y niebla. Es la técnica nativa de la GPU.</li>
+    </ul>
+
+    <h3>📊 Metodología de medición</h3>
+    <ul>
+      <li>Se usa <code>performance.now()</code> para medir el tiempo de cada frame.</li>
+      <li>Se descarta el primer frame (calentamiento) y se promedian <b>5 frames</b> por técnica.</li>
+      <li>Se mide el <b>render puro</b> (sin el <code>requestAnimationFrame</code> del navegador).</li>
+      <li>La resolución del Ray Tracing es seleccionable (160×100 a 640×400). La rasterización usa la resolución nativa de la ventana (limitada a ×1.5 DPR).</li>
+      <li>FPS teóricos = 1000 / tiempo medio por frame.</li>
+    </ul>
+
+    <h3>🧪 Resultados esperados (orientativos)</h3>
+    <table>
+      <tr>
+        <th>Técnica</th><th>Resolución</th><th>Tiempo/frame</th><th>FPS</th>
+      </tr>
+      <tr><td>Ray Tracing</td><td>160×100</td><td>~2–5 ms</td><td>~200–500</td></tr>
+      <tr><td>Ray Tracing</td><td>320×200</td><td>~8–20 ms</td><td>~50–125</td></tr>
+      <tr><td>Ray Tracing</td><td>480×300</td><td>~18–45 ms</td><td>~22–55</td></tr>
+      <tr><td>Ray Tracing</td><td>640×400</td><td>~35–80 ms</td><td>~12–28</td></tr>
+      <tr><td>Rasterización</td><td>Ventana (DPR ×1.5)</td><td>~0.5–2 ms</td><td>~500–2000</td></tr>
+    </table>
+    <p style="opacity:.7;font-size:12px;">Los valores reales dependen de la CPU/GPU del dispositivo. Mide en tu equipo con el botón <b>📊 Medir</b>.</p>
+
+    <h3>⚖️ Comparativa conceptual</h3>
+    <table>
+      <tr><th>Aspecto</th><th>Ray Tracing (CPU)</th><th>Rasterización (GPU)</th></tr>
+      <tr><td>Unidad de ejecución</td><td>CPU (JavaScript)</td><td>GPU (WebGL)</td></tr>
+      <tr><td>Paralelismo</td><td>Secuencial por píxel</td><td>Masivo (miles de hilos)</td></tr>
+      <tr><td>Calidad de reflejos</td><td>Exactos (rebote físico)</td><td>Aproximados (necesitan trucos)</td></tr>
+      <tr><td>Sombras</td><td>Duras, por rayos de oclusión</td><td>Suaves (PCF), aproximadas</td></tr>
+      <tr><td>Escalabilidad</td><td>O(píxeles × objetos)</td><td>O(geometría) en paralelo</td></tr>
+      <tr><td>Ventaja</td><td>Física de luz real, fácil añadir refracción</td><td>Muy rápida, millones de triángulos</td></tr>
+      <tr><td>Desventaja</td><td>Costosa por píxel, no usa GPU</td><td>Reflejos y refracción aproximados</td></tr>
+    </table>
+
+    <h3>🛠️ Controles</h3>
+    <ul>
+      <li><b>Modo:</b> alterna Ray Tracing ↔ Rasterización.</li>
+      <li><b>Sombras / Reflejos:</b> activan/desactivan esas características en RT.</li>
+      <li><b>Resolución RT:</b> cambia el búfer del canvas de ray tracing.</li>
+      <li><b>📊 Medir:</b> ejecuta la comparativa completa y rellena la tabla en pantalla.</li>
+    </ul>
+  </div>
 </div>
 
 <script type="module">
@@ -89,7 +237,6 @@ try {
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // Personaje Yahu
   const yahu = new THREE.Group();
   function addPart(geometry, mat, position, scale) {
     const mesh = new THREE.Mesh(geometry, mat);
@@ -112,7 +259,6 @@ try {
   yahu.position.set(0,0,4);
   scene.add(yahu);
 
-  // Árboles
   function createTree(x,z,size=1) {
     const group = new THREE.Group();
     const trunk = new THREE.Mesh(
@@ -162,7 +308,6 @@ try {
     spheres.push({c:center,r:radius,color,reflectivity});
   }
 
-  // Esferas que representan el cuerpo, ojos, cuernos y alas de Yahu.
   sphere([0,.5,4],.6,[.94,.94,.94],.28);
   sphere([-.25,.55,3.52],.12,[.5,.1,.25],.55);
   sphere([.25,.55,3.52],.12,[.5,.1,.25],.55);
@@ -174,7 +319,6 @@ try {
   sphere([-.5,-.4,4],.24,[.95,.75,.85],.12);
   sphere([.5,-.4,4],.24,[.95,.75,.85],.12);
 
-  // Árboles simplificados mediante esferas y troncos aproximados como esferas alargadas.
   const treeData=[
     [-3.1,-.2,7.5,1.25],[3.1,-.2,7.8,1.35],
     [-5,-.2,11,1.7],[5,-.2,11,1.65],
@@ -200,22 +344,21 @@ try {
     right[2]*forward[0]-right[0]*forward[2],
     right[0]*forward[1]-right[1]*forward[0]
   ]);
-  
+
   let shadowsOn=true, reflectionsOn=true, rayMode=true;
-  
-  // Configuración del Canvas para Ray Tracing
-  const rtWidth=320, rtHeight=200;
+
+  // Configuración dinámica del Canvas para Ray Tracing
+  let rtWidth=320, rtHeight=200;
   const rtCanvas=document.createElement('canvas');
   rtCanvas.width=rtWidth; rtCanvas.height=rtHeight;
   const rtCtx=rtCanvas.getContext('2d',{alpha:false});
-  const imageData=rtCtx.createImageData(rtWidth,rtHeight);
-  
-  // Textura para mapear el resultado en Three.js
+  let imageData=rtCtx.createImageData(rtWidth,rtHeight);
+
   const rtTexture = new THREE.CanvasTexture(rtCanvas);
   rtTexture.colorSpace = THREE.SRGBColorSpace;
-  rtTexture.minFilter = THREE.NearestFilter; // Pixelado
+  rtTexture.minFilter = THREE.NearestFilter;
   rtTexture.magFilter = THREE.NearestFilter;
-  rtTexture.flipY = false; // IMPORTANTE: Evita que la imagen se voltee
+  rtTexture.flipY = false;
 
   const rtScene = new THREE.Scene();
   const rtCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -233,7 +376,7 @@ try {
     const p=add(origin,mul(dir,t));
     return {t,p,n:norm(sub(p,s.c)),color:s.color,reflectivity:s.reflectivity};
   }
-  
+
   function trace(origin,dir){
     let closest=null;
     for(const s of spheres){
@@ -250,7 +393,7 @@ try {
     }
     return closest;
   }
-  
+
   function isOccluded(point,normal){
     const origin=add(point,mul(normal,.003));
     for(const s of spheres) if(hitSphere(origin,lightDir,s)) return true;
@@ -260,7 +403,7 @@ try {
     }
     return false;
   }
-  
+
   function shade(hit,ray,depth=0){
     if(!hit)return [.55,.72,.7];
     let diffuse=Math.max(0,dot(hit.n,lightDir));
@@ -268,7 +411,6 @@ try {
     if(shadowsOn&&diffuse>0&&isOccluded(hit.p,hit.n))shadeFactor=.22;
     let color=mul(hit.color,shadeFactor);
 
-    // Un solo rebote: calcula el rayo reflejado y su intersección.
     if(reflectionsOn&&depth===0&&hit.reflectivity>0){
       const reflected=norm(sub(ray,mul(hit.n,2*dot(ray,hit.n))));
       const reflectedHit=trace(add(hit.p,mul(hit.n,.004)),reflected);
@@ -280,14 +422,13 @@ try {
     }
     return color;
   }
-  
+
   function renderRayTracing(){
     const aspect=rtWidth/rtHeight;
     const fov=Math.tan(45 * Math.PI / 180 / 2);
-    
+
     for(let y=0;y<rtHeight;y++){
       for(let x=0;x<rtWidth;x++){
-        // Cada píxel lanza un rayo primario desde la cámara.
         const px=(2*(x+.5)/rtWidth-1)*aspect*fov;
         const py=(1-2*(y+.5)/rtHeight)*fov;
         const ray=norm(add(forward,add(mul(right,px),mul(up,py))));
@@ -301,10 +442,17 @@ try {
       }
     }
     rtCtx.putImageData(imageData,0,0);
-    
-    // Actualizar la textura y renderizar en Three.js
     rtTexture.needsUpdate = true;
     renderer.render(rtScene, rtCamera);
+  }
+
+  function setRTResolution(w, h){
+    rtWidth = w; rtHeight = h;
+    rtCanvas.width = w; rtCanvas.height = h;
+    imageData = rtCtx.createImageData(w, h);
+    rtTexture.dispose();
+    rtTexture.image = rtCanvas;
+    rtTexture.needsUpdate = true;
   }
 
   // ==========================================================
@@ -313,16 +461,20 @@ try {
   const modeBtn=document.getElementById('mode');
   const shadowBtn=document.getElementById('shadows');
   const reflectionBtn=document.getElementById('reflections');
+  const rtResSelect=document.getElementById('rtRes');
+  const measureBtn=document.getElementById('measureBtn');
+  const metricsBody=document.getElementById('metricsBody');
+  const metricsNote=document.getElementById('metricsNote');
 
   function updateButtons(){
     modeBtn.textContent='Modo: '+(rayMode?'Ray Tracing':'Rasterización');
     modeBtn.classList.toggle('active',rayMode);
-    shadowBtn.textContent='Sombras: '+(shadowsOn?'activadas':'desactivadas');
+    shadowBtn.textContent='Sombras: '+(shadowsOn?'on':'off');
     shadowBtn.classList.toggle('active',shadowsOn);
-    reflectionBtn.textContent='Reflejos: '+(reflectionsOn?'activados':'desactivados');
+    reflectionBtn.textContent='Reflejos: '+(reflectionsOn?'on':'off');
     reflectionBtn.classList.toggle('active',reflectionsOn);
   }
-  
+
   function draw(){
     if(rayMode) {
       renderRayTracing();
@@ -330,41 +482,169 @@ try {
       renderer.render(scene,camera);
     }
   }
-  
+
   modeBtn.addEventListener('click',()=>{
     rayMode=!rayMode;
     updateButtons();
     draw();
   });
-  
+
   shadowBtn.addEventListener('click',()=>{
     shadowsOn=!shadowsOn;
     sun.castShadow=shadowsOn;
     renderer.shadowMap.needsUpdate=true;
     updateButtons();
-    draw(); // Redibujar en ambos modos
+    draw();
   });
-  
+
   reflectionBtn.addEventListener('click',()=>{
     reflectionsOn=!reflectionsOn;
     updateButtons();
-    draw(); // Redibujar en ambos modos
+    draw();
   });
 
-  function resize(){
-    camera.aspect=innerWidth/innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth,innerHeight);
-    draw();
+  rtResSelect.addEventListener('change', ()=>{
+    const [w,h] = rtResSelect.value.split('x').map(Number);
+    setRTResolution(w, h);
+    if(rayMode) renderRayTracing();
+  });
+
+  // ==========================================================
+  // MEDICIÓN DE RENDIMIENTO
+  // ==========================================================
+  const FRAMES = 5;
+
+  function measureFrame(renderFn){
+    renderFn(); // calentamiento descartado
+    const times = [];
+    for(let i=0;i<FRAMES;i++){
+      const t0 = performance.now();
+      renderFn();
+      const t1 = performance.now();
+      times.push(t1 - t0);
+    }
+    // Media recortada: descarta min y max si hay suficientes muestras
+    let sorted = [...times].sort((a,b)=>a-b);
+    let used = sorted.length >= 4 ? sorted.slice(1, -1) : sorted;
+    const avg = used.reduce((a,b)=>a+b,0) / used.length;
+    return { avg, min: sorted[0], max: sorted[sorted.length-1] };
   }
-  
-  addEventListener('resize',resize);
+
+  function fmt(ms){
+    if(ms < 1) return ms.toFixed(2) + ' ms';
+    if(ms < 100) return ms.toFixed(1) + ' ms';
+    return ms.toFixed(0) + ' ms';
+  }
+  function fps(ms){ return (1000/ms).toFixed(0); }
+
+  function addRow(label, cls, resLabel, r){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="${cls}">${label}</td>
+      <td>${resLabel}</td>
+      <td class="highlight" title="min ${fmt(r.min)} / max ${fmt(r.max)}">${fmt(r.avg)}</td>
+      <td>${fps(r.avg)}</td>
+    `;
+    metricsBody.appendChild(tr);
+  }
+
+  async function runMeasurements(){
+    measureBtn.disabled = true;
+    measureBtn.textContent = '⏳ Midiendo…';
+    metricsBody.innerHTML = '';
+    metricsNote.textContent = 'Midiendo… puede tardar unos segundos.';
+    await new Promise(r => setTimeout(r, 30));
+
+    // Guardar estado actual
+    const saved = { rayMode, shadowsOn, reflectionsOn, rtRes: rtResSelect.value };
+
+    // 1) Rasterización
+    rayMode = false;
+    shadowsOn = true;
+    reflectionsOn = true;
+    sun.castShadow = true;
+    renderer.shadowMap.needsUpdate = true;
+    const rast = measureFrame(() => renderer.render(scene, camera));
+    const rastResLabel = `${innerWidth}×${innerHeight} (DPR ${Math.min(devicePixelRatio,1.5).toFixed(1)})`;
+
+    // 2) Ray Tracing a distintas resoluciones
+    rayMode = true;
+    shadowsOn = true;
+    reflectionsOn = true;
+    const resolutions = [[160,100],[320,200],[480,300],[640,400]];
+    const rtResults = [];
+    for(const [w,h] of resolutions){
+      setRTResolution(w,h);
+      const r = measureFrame(() => renderRayTracing());
+      rtResults.push({w, h, r});
+      await new Promise(res => setTimeout(res, 15));
+    }
+
+    // Pintar tabla (RT ordenado por resolución, luego rasterización)
+    for(const {w,h,r} of rtResults) addRow('Ray Tracing','rt',`${w}×${h}`,r);
+    addRow('Rasterización','rs',rastResLabel,rast);
+
+    // Resumen
+    const fastestRT = rtResults.reduce((a,b) => a.r.avg < b.r.avg ? a : b);
+    const ratio = fastestRT.r.avg / rast.avg;
+    metricsNote.innerHTML = `
+      <b>Resumen:</b> Rasterización = <b>${fmt(rast.avg)}</b> (${fps(rast.avg)} FPS). 
+      Mejor RT = <b>${fmt(fastestRT.r.avg)}</b> a ${fastestRT.w}×${fastestRT.h} (${fps(fastestRT.r.avg)} FPS). 
+      RT es <b>${ratio.toFixed(1)}×</b> más lento.
+    `;
+
+    // Restaurar estado
+    rayMode = saved.rayMode;
+    shadowsOn = saved.shadowsOn;
+    reflectionsOn = saved.reflectionsOn;
+    sun.castShadow = shadowsOn;
+    renderer.shadowMap.needsUpdate = true;
+    if(saved.rtRes !== rtResSelect.value){
+      rtResSelect.value = saved.rtRes;
+      const [w,h] = saved.rtRes.split('x').map(Number);
+      setRTResolution(w,h);
+    }
+    updateButtons();
+    draw();
+
+    measureBtn.disabled = false;
+    measureBtn.textContent = '📊 Medir';
+  }
+
+  measureBtn.addEventListener('click', runMeasurements);
+
+  // ==========================================================
+  // README MODAL
+  // ==========================================================
+  const readmeBtn = document.getElementById('readmeBtn');
+  const readmeModal = document.getElementById('readmeModal');
+  const closeReadme = document.getElementById('closeReadme');
+
+  readmeBtn.addEventListener('click', () => {
+    readmeModal.style.display = 'block';
+  });
+  closeReadme.addEventListener('click', () => {
+    readmeModal.style.display = 'none';
+  });
+  readmeModal.addEventListener('click', event => {
+    if (event.target === readmeModal) readmeModal.style.display = 'none';
+  });
+  window.addEventListener('keydown', event => {
+    if (event.key === 'Escape') readmeModal.style.display = 'none';
+  });
+
+  window.addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+    draw();
+  });
+
   updateButtons();
   draw();
-
-} catch(error) {
-  console.error(error);
-  errorBox.style.display='block';
+} catch (error) {
+  console.error('Error al iniciar la escena:', error);
+  errorBox.style.display = 'block';
 }
 </script>
 </body>
