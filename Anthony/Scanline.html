@@ -1,293 +1,153 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Escena Base: Rasterización, Z-Buffer y Scanline</title>
-    <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            background-color: #111;
-        }
-        
-        /* 1. EFECTO SCANLINE (Capa CSS sobre el canvas) */
-        #scanline-overlay {
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            pointer-events: none;
-            background: linear-gradient(
-                to bottom,
-                rgba(255,255,255,0),
-                rgba(255,255,255,0) 50%,
-                rgba(0,0,0,0.4) 50%,
-                rgba(0,0,0,0.4)
-            );
-            background-size: 100% 4px;
-            z-index: 10;
-            box-shadow: inset 0 0 100px rgba(0,0,0,0.8); /* Viñeta CRT */
-        }
-
-        /* 2. INTERFAZ DE USUARIO (Panel de medición) */
-        #ui {
-            position: absolute;
-            top: 20px; left: 20px;
-            color: #eee;
-            font-family: monospace;
-            z-index: 20;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #444;
-            box-shadow: 0 0 10px rgba(0,0,0,0.5);
-            pointer-events: auto; /* Permite hacer clic en los botones */
-        }
-
-        #ui h3 { margin: 0 0 10px 0; color: #ffb3d9; font-size: 14px; }
-        
-        #ui label { display: block; margin-top: 8px; font-size: 12px; }
-        
-        #ui button {
-            background: #333;
-            color: #fff;
-            border: 1px solid #555;
-            padding: 4px 8px;
-            margin-right: 5px;
-            cursor: pointer;
-            border-radius: 3px;
-            font-family: monospace;
-        }
-        
-        #ui button:hover { background: #444; }
-
-        table {
-            border-collapse: collapse;
-            font-size: 12px;
-            width: 100%;
-            margin-top: 10px;
-        }
-
-        td, th {
-            border: 1px solid #444;
-            padding: 4px 6px;
-            text-align: center;
-        }
-
-        th { background: #222; color: #ffb3d9; }
-        .ok { color: #7f7; font-weight: bold; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yahu en el bosque</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+  body { background: linear-gradient(#9ac7c0 0%, #c1d7ad 55%, #496b3c 100%); }
+  canvas { display: block; width: 100%; height: 100%; }
+  #error {
+    display: none; position: fixed; left: 12px; right: 12px; bottom: 12px;
+    padding: 10px 14px; border-radius: 8px; background: #fff; color: #222;
+    font: 14px system-ui, sans-serif;
+  }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
 </head>
 <body>
+<canvas id="c"></canvas>
+<div id="error">No se pudo cargar la librería 3D. Revisa tu conexión a internet y abre el archivo con Live Server en Visual Studio Code.</div>
 
-    <div id="scanline-overlay"></div>
-    
-    <div id="ui">
-        <h3>RASTERIZACIÓN + Z-BUFFER</h3>
-        <p style="margin:0 0 10px 0; font-size:11px; color:#aaa;">Sombreado: Flat | Cámara: Perspectiva</p>
-        
-        <label>Resolución:</label>
-        <div>
-            <button onclick="cambiarResolucion(1)">Baja</button>
-            <button onclick="cambiarResolucion(2)">Alta</button>
-        </div>
 
-        <table>
-            <thead>
-                <tr>
-                    <th>Técnica</th>
-                    <th>Res.</th>
-                    <th>ms</th>
-                    <th>FPS</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>GPU Raster</td>
-                    <td id="td-res">--</td>
-                    <td id="td-ms" class="ok">--</td>
-                    <td id="td-fps" class="ok">--</td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
+<script type="module">
+import * as THREE from 'three';
 
-    <!-- Importar Three.js (Motor de Rasterización por GPU) -->
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-            }
-        }
-    </script>
+const canvas = document.getElementById('c');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xa9cfc1);
+scene.fog = new THREE.Fog(0xa9cfc1, 14, 32);
 
-    <script type="module">
-        import * as THREE from 'three';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 2.3, -5.8);
+camera.lookAt(0, 0.45, 4.5);
 
-        // ==========================================
-        // 1. ESCENA BASE: CÁMARA
-        // ==========================================
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x222222);
-        scene.fog = new THREE.FogExp2(0x222222, 0.03); 
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-        camera.position.set(0, 3, 10);
+scene.add(new THREE.HemisphereLight(0xe8f6ff, 0x52613b, 2.0));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(-4, 8, -3);
+sun.castShadow = true;
+scene.add(sun);
 
-        const renderer = new THREE.WebGLRenderer({ antialias: false }); 
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.shadowMap.enabled = true; 
-        document.body.appendChild(renderer.domElement);
+const mat = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.9, flatShading: true });
+const white = mat(0xf2f2f2);
+const pink = mat(0xf2bfd9);
+const darkPink = mat(0xb33366);
+const purple = mat(0x801a40);
+const trunkMat = mat(0x62402b);
+const leaf1 = mat(0x397343);
+const leaf2 = mat(0x285b35);
+const grassMat = mat(0x557c45);
 
-        const controls = new OrbitControls(camera, renderer.domElement);
-        controls.target.set(0, 1.5, 0);
-        controls.enableDamping = true;
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), grassMat);
+floor.rotation.x = -Math.PI / 2;
+floor.position.y = -1;
+floor.receiveShadow = true;
+scene.add(floor);
 
-        // ==========================================
-        // 2. ESCENA BASE: LUCES
-        // ==========================================
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
-        scene.add(ambientLight);
+// Personaje Yahu: todas las piezas se mantienen dentro de un mismo grupo.
+const yahu = new THREE.Group();
+function addPart(geometry, material, position, scale) {
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(...position);
+  if (scale) mesh.scale.set(...scale);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  yahu.add(mesh);
+  return mesh;
+}
+addPart(new THREE.SphereGeometry(0.6, 10, 8), white, [0, 0.5, 0]);
+addPart(new THREE.SphereGeometry(0.12, 8, 6), purple, [-0.25, 0.55, -0.48]);
+addPart(new THREE.SphereGeometry(0.12, 8, 6), purple, [0.25, 0.55, -0.48]);
+addPart(new THREE.SphereGeometry(0.3, 10, 8), darkPink, [0, -0.3, 0.03]);
+addPart(new THREE.ConeGeometry(0.15, 0.6, 6), pink, [-0.4, 1.2, 0]);
+addPart(new THREE.ConeGeometry(0.15, 0.6, 6), pink, [0.4, 1.2, 0]);
+addPart(new THREE.SphereGeometry(0.25, 8, 6), pink, [-0.8, 0.8, 0], [1.5, 1, 0.5]);
+addPart(new THREE.SphereGeometry(0.25, 8, 6), pink, [0.8, 0.8, 0], [1.5, 1, 0.5]);
+addPart(new THREE.SphereGeometry(0.25, 8, 6), pink, [-0.5, -0.4, 0], [1.2, 1, 0.5]);
+addPart(new THREE.SphereGeometry(0.25, 8, 6), pink, [0.5, -0.4, 0], [1.2, 1, 0.5]);
+yahu.position.set(0, 0, 4);
+scene.add(yahu);
 
-        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-        dirLight.position.set(5, 10, 5);
-        dirLight.castShadow = true;
-        scene.add(dirLight);
+// Árboles del bosque
+function createTree(x, z, size = 1) {
+  const group = new THREE.Group();
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.22 * size, 0.32 * size, 1.8 * size, 7),
+    trunkMat
+  );
+  trunk.position.y = -0.1 + 0.9 * size;
+  trunk.castShadow = true;
+  group.add(trunk);
 
-        // ==========================================
-        // 3. ESCENA BASE: OBJETOS
-        // ==========================================
-        const matCuerpo = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
-        const matRosa = new THREE.MeshLambertMaterial({ color: 0xe8a1c1, flatShading: true });
-        const matMorado = new THREE.MeshLambertMaterial({ color: 0x6b1d45, flatShading: true });
+  const crown1 = new THREE.Mesh(new THREE.SphereGeometry(1.15 * size, 8, 7), leaf1);
+  crown1.position.y = 2.0 * size;
+  crown1.castShadow = true;
+  group.add(crown1);
 
-        // Suelo
-        const floorGeo = new THREE.PlaneGeometry(50, 50);
-        const floorMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a, flatShading: true });
-        const floor = new THREE.Mesh(floorGeo, floorMat);
-        floor.rotation.x = -Math.PI / 2;
-        floor.receiveShadow = true;
-        scene.add(floor);
+  const crown2 = new THREE.Mesh(new THREE.SphereGeometry(0.82 * size, 8, 7), leaf2);
+  crown2.position.set(0.48 * size, 2.45 * size, 0.05);
+  crown2.castShadow = true;
+  group.add(crown2);
 
-        // Grupo del Personaje
-        const personaje = new THREE.Group();
+  group.position.set(x, -1, z);
+  scene.add(group);
+}
+createTree(-3.1, 7.5, 1.25);
+createTree(3.1, 7.8, 1.35);
+createTree(-5.0, 11, 1.7);
+createTree(5.0, 11, 1.65);
+createTree(0, 14, 2.0);
+createTree(-7, 16, 2.0);
+createTree(7, 16, 2.0);
 
-        // Cuerpo
-        const cuerpoGeo = new THREE.ConeGeometry(1, 2.5, 6);
-        const cuerpo = new THREE.Mesh(cuerpoGeo, matMorado);
-        cuerpo.position.y = 1.25;
-        cuerpo.castShadow = true;
-        personaje.add(cuerpo);
+// Arbustos pequeños para dar profundidad al bosque
+for (let i = 0; i < 18; i++) {
+  const x = (i % 6 - 2.5) * 2.2;
+  const z = 6 + Math.floor(i / 6) * 3.2;
+  const bush = new THREE.Mesh(new THREE.SphereGeometry(0.65, 7, 6), i % 2 ? leaf1 : leaf2);
+  bush.position.set(x, -0.55, z);
+  bush.scale.set(1.4, 0.8, 0.9);
+  bush.castShadow = true;
+  scene.add(bush);
+}
 
-        // Cabeza
-        const cabezaGeo = new THREE.SphereGeometry(1, 6, 5);
-        const cabeza = new THREE.Mesh(cabezaGeo, matCuerpo);
-        cabeza.position.y = 3;
-        cabeza.castShadow = true;
-        personaje.add(cabeza);
+function resize() {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+}
+addEventListener('resize', resize);
 
-        // Cuernos
-        const cuernoGeo = new THREE.ConeGeometry(0.3, 1.5, 4);
-        const cuernoIzq = new THREE.Mesh(cuernoGeo, matRosa);
-        cuernoIzq.position.set(-0.6, 4, 0);
-        cuernoIzq.rotation.z = Math.PI / 4;
-        cuernoIzq.castShadow = true;
-        
-        const cuernoDer = new THREE.Mesh(cuernoGeo, matRosa);
-        cuernoDer.position.set(0.6, 4, 0);
-        cuernoDer.rotation.z = -Math.PI / 4;
-        cuernoDer.castShadow = true;
-
-        personaje.add(cuernoIzq);
-        personaje.add(cuernoDer);
-
-        // Alas laterales
-        const alaGeo = new THREE.ConeGeometry(1, 2.5, 4);
-        const alaIzq = new THREE.Mesh(alaGeo, matRosa);
-        alaIzq.position.set(-1.2, 2, 0);
-        alaIzq.rotation.z = Math.PI / 2.5;
-        alaIzq.scale.set(0.2, 1, 1);
-        alaIzq.castShadow = true;
-        personaje.add(alaIzq);
-
-        const alaDer = new THREE.Mesh(alaGeo, matRosa);
-        alaDer.position.set(1.2, 2, 0);
-        alaDer.rotation.z = -Math.PI / 2.5;
-        alaDer.scale.set(0.2, 1, 1);
-        alaDer.castShadow = true;
-        personaje.add(alaDer);
-
-        scene.add(personaje);
-
-        // ==========================================
-        // 4. LÓGICA DE MEDICIÓN Y RESOLUCIÓN
-        // ==========================================
-        const tdRes = document.getElementById('td-res');
-        const tdMs = document.getElementById('td-ms');
-        const tdFps = document.getElementById('td-fps');
-
-        // Función global para los botones de resolución
-        window.cambiarResolucion = function(escala) {
-            const nuevoAncho = window.innerWidth * escala;
-            const nuevoAlto = window.innerHeight * escala;
-            renderer.setSize(nuevoAncho, nuevoAlto, false); // false para no cambiar el CSS, solo el buffer interno
-            tdRes.textContent = `${nuevoAncho}×${nuevoAlto}`;
-        };
-        
-        // Inicializar texto de resolución
-        tdRes.textContent = `${window.innerWidth}×${window.innerHeight}`;
-
-        let lastTime = performance.now();
-        let frames = 0;
-
-        // ==========================================
-        // 5. BUCLE DE RENDERIZADO (CON MEDICIÓN)
-        // ==========================================
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            tdRes.textContent = `${window.innerWidth}×${window.innerHeight}`;
-        });
-
-        const clock = new THREE.Clock();
-
-        function animate() {
-            requestAnimationFrame(animate);
-            
-            const time = clock.getElapsedTime();
-
-            // Animación flotante
-            personaje.position.y = Math.sin(time * 2) * 0.1;
-            personaje.rotation.y = Math.sin(time * 0.5) * 0.3;
-
-            controls.update();
-            
-            // --- MEDICIÓN DEL TIEMPO DE RENDERIZADO (ms) ---
-            const t0 = performance.now();
-            
-            // El motor de Three.js hace la Rasterización y aplica el Z-Buffer aquí
-            renderer.render(scene, camera);
-            
-            const t1 = performance.now();
-            const msRender = (t1 - t0).toFixed(2); // Tiempo en milisegundos
-            
-            // --- CÁLCULO DE FPS ---
-            frames++;
-            if (t1 - lastTime >= 1000) {
-                const fps = Math.round((frames * 1000) / (t1 - lastTime));
-                tdFps.textContent = fps;
-                frames = 0;
-                lastTime = t1;
-            }
-
-            // Actualizar tabla cada frame
-            tdMs.textContent = msRender;
-        }
-        
-        animate();
-    </script>
+function animate() {
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+animate();
+</script>
 </body>
 </html>
