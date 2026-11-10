@@ -1,273 +1,371 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Escena Base: Rasterización, Z-Buffer y Scanline</title>
-    <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            background-color: #111;
-        }
-        
-        /* 1. EFECTO SCANLINE (Capa CSS sobre el canvas) */
-        #scanline-overlay {
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            pointer-events: none;
-            background: linear-gradient(
-                to bottom,
-                rgba(255,255,255,0),
-                rgba(255,255,255,0) 50%,
-                rgba(0,0,0,0.4) 50%,
-                rgba(0,0,0,0.4)
-            );
-            background-size: 100% 4px;
-            z-index: 10;
-            box-shadow: inset 0 0 100px rgba(0,0,0,0.8); /* Viñeta CRT */
-        }
-
-        #ui {
-            position: absolute;
-            bottom: 20px; left: 20px;
-            color: #a8a29e;
-            font-family: monospace;
-            z-index: 20;
-            text-shadow: 1px 1px 2px #000;
-        }
-
-        /* Panel de medición y controles */
-        #panel {
-            position: absolute;
-            top: 20px; left: 20px;
-            background: rgba(30, 30, 30, 0.9);
-            color: #eee;
-            font-family: system-ui, sans-serif;
-            padding: 16px;
-            border-radius: 8px;
-            border: 1px solid #444;
-            width: 300px;
-            z-index: 20;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-        }
-        #panel h3 { margin-top: 0; color: #a7c957; border-bottom: 1px solid #444; padding-bottom: 8px; }
-        kbd { background: #333; border: 1px solid #555; border-radius: 3px; padding: 2px 6px; font-size: 12px;}
-        table { border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 13px; }
-        td, th { border: 1px solid #444; padding: 6px; text-align: center; }
-        th { background: #333; color: #fff; }
-        .ok { color: #7f7; font-weight: bold; }
-        .btn-clear { width: 100%; margin-top: 10px; background: #552222; border: 1px solid #883333; color: #fff; padding: 8px; border-radius: 4px; cursor: pointer; font-family: system-ui, sans-serif; }
-        .btn-clear:hover { background: #773333; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yahu en el bosque - Ray Tracing</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+  body { background: #18251d; font-family: system-ui, Arial, sans-serif; }
+  #view { display:block; width:100%; height:100%; }
+  #controls {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+    display:flex; flex-wrap:wrap; justify-content:center; gap:9px;
+    width:min(96%, 760px); padding:10px; border-radius:12px;
+    background:rgba(12,20,16,.82); border:1px solid rgba(255,255,255,.22);
+    backdrop-filter: blur(6px);
+  }
+  button {
+    border:1px solid #8ca98d; border-radius:8px; padding:10px 14px;
+    color:#f5fff4; background:#304b35; font-weight:600; cursor:pointer;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  button.active { background:#8b3f69; border-color:#f2bfd9; }
+  button:hover { filter:brightness(1.15); }
+  #status { width:100%; text-align:center; color:#e6eee2; font-size:12px; }
+  #error {
+    display:none; position:fixed; top:12px; left:12px; right:12px;
+    padding:12px; border-radius:8px; background:#fff; color:#222;
+  }
+</style>
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}
+</script>
 </head>
 <body>
+<canvas id="view"></canvas>
+<div id="error">No se pudo cargar Three.js. Comprueba tu conexión y abre el archivo con Live Server.</div>
+<div id="controls">
+  <button id="mode" class="active">Modo: Ray Tracing</button>
+  <button id="shadows" class="active">Sombras: activadas</button>
+  <button id="reflections" class="active">Reflejos: activados</button>
+  <div id="status">Rayos primarios · Intersección con esferas y plano · Sombras · Un rebote de reflexión</div>
+</div>
 
-    <div id="scanline-overlay"></div>
+<script type="module">
+import * as THREE from 'three';
+
+const canvas = document.getElementById('view');
+const errorBox = document.getElementById('error');
+
+try {
+  // ==========================================================
+  // ESCENA 3D NORMAL (RASTERIZACIÓN)
+  // ==========================================================
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xa9cfc1);
+  scene.fog = new THREE.Fog(0xa9cfc1, 14, 34);
+
+  const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+  camera.position.set(0, 2.3, -5.8);
+  camera.lookAt(0, 0.45, 4.5);
+
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  scene.add(new THREE.HemisphereLight(0xe8f6ff, 0x52613b, 2));
+  const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+  sun.position.set(-4, 8, -3);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  scene.add(sun);
+
+  const material = color => new THREE.MeshStandardMaterial({
+    color, roughness: 0.82, flatShading: true
+  });
+  const white = material(0xf2f2f2), pink = material(0xf2bfd9);
+  const darkPink = material(0xb33366), purple = material(0x801a40);
+  const trunkMat = material(0x62402b), leaf1 = material(0x397343);
+  const leaf2 = material(0x285b35), grassMat = material(0x557c45);
+
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(100,100), grassMat);
+  floor.rotation.x = -Math.PI/2;
+  floor.position.y = -1;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // Personaje Yahu
+  const yahu = new THREE.Group();
+  function addPart(geometry, mat, position, scale) {
+    const mesh = new THREE.Mesh(geometry, mat);
+    mesh.position.set(...position);
+    if (scale) mesh.scale.set(...scale);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    yahu.add(mesh);
+  }
+  addPart(new THREE.SphereGeometry(.6,10,8), white, [0,.5,0]);
+  addPart(new THREE.SphereGeometry(.12,8,6), purple, [-.25,.55,-.48]);
+  addPart(new THREE.SphereGeometry(.12,8,6), purple, [.25,.55,-.48]);
+  addPart(new THREE.SphereGeometry(.3,10,8), darkPink, [0,-.3,.03]);
+  addPart(new THREE.ConeGeometry(.15,.6,6), pink, [-.4,1.2,0]);
+  addPart(new THREE.ConeGeometry(.15,.6,6), pink, [.4,1.2,0]);
+  addPart(new THREE.SphereGeometry(.25,8,6), pink, [-.8,.8,0], [1.5,1,.5]);
+  addPart(new THREE.SphereGeometry(.25,8,6), pink, [.8,.8,0], [1.5,1,.5]);
+  addPart(new THREE.SphereGeometry(.25,8,6), pink, [-.5,-.4,0], [1.2,1,.5]);
+  addPart(new THREE.SphereGeometry(.25,8,6), pink, [.5,-.4,0], [1.2,1,.5]);
+  yahu.position.set(0,0,4);
+  scene.add(yahu);
+
+  // Árboles
+  function createTree(x,z,size=1) {
+    const group = new THREE.Group();
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(.22*size,.32*size,1.8*size,7), trunkMat
+    );
+    trunk.position.y = -.1+.9*size;
+    trunk.castShadow = true;
+    group.add(trunk);
+    const crown = new THREE.Mesh(new THREE.SphereGeometry(1.15*size,8,7),leaf1);
+    crown.position.y = 2*size;
+    crown.castShadow = true;
+    group.add(crown);
+    const crown2 = new THREE.Mesh(new THREE.SphereGeometry(.82*size,8,7),leaf2);
+    crown2.position.set(.48*size,2.45*size,.05);
+    crown2.castShadow = true;
+    group.add(crown2);
+    group.position.set(x,-1,z);
+    scene.add(group);
+  }
+  createTree(-3.1,7.5,1.25); createTree(3.1,7.8,1.35);
+  createTree(-5,11,1.7); createTree(5,11,1.65);
+  createTree(0,14,2); createTree(-7,16,2); createTree(7,16,2);
+
+  for(let i=0;i<18;i++){
+    const x=(i%6-2.5)*2.2, z=6+Math.floor(i/6)*3.2;
+    const bush=new THREE.Mesh(new THREE.SphereGeometry(.65,7,6),i%2?leaf1:leaf2);
+    bush.position.set(x,-.55,z);
+    bush.scale.set(1.4,.8,.9);
+    bush.castShadow=true;
+    scene.add(bush);
+  }
+
+  // ==========================================================
+  // MOTOR DE RAY TRACING POR CPU
+  // ==========================================================
+  const V = {
+    add:(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],
+    sub:(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],
+    mul:(a,s)=>[a[0]*s,a[1]*s,a[2]*s],
+    dot:(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],
+    norm:a=>{const l=Math.hypot(...a)||1;return a.map(n=>n/l);}
+  };
+  const {add,sub,mul,dot,norm}=V;
+  const lightDir=norm([-1,2,-1.5]);
+  const spheres=[];
+  function sphere(center,radius,color,reflectivity=0){
+    spheres.push({c:center,r:radius,color,reflectivity});
+  }
+
+  // Esferas que representan el cuerpo, ojos, cuernos y alas de Yahu.
+  sphere([0,.5,4],.6,[.94,.94,.94],.28);
+  sphere([-.25,.55,3.52],.12,[.5,.1,.25],.55);
+  sphere([.25,.55,3.52],.12,[.5,.1,.25],.55);
+  sphere([0,-.3,4.03],.3,[.7,.2,.4],.22);
+  sphere([-.4,1.2,4],.15,[.95,.75,.85],.15);
+  sphere([.4,1.2,4],.15,[.95,.75,.85],.15);
+  sphere([-.8,.8,4],.27,[.95,.75,.85],.12);
+  sphere([.8,.8,4],.27,[.95,.75,.85],.12);
+  sphere([-.5,-.4,4],.24,[.95,.75,.85],.12);
+  sphere([.5,-.4,4],.24,[.95,.75,.85],.12);
+
+  // Árboles simplificados mediante esferas y troncos aproximados como esferas alargadas.
+  const treeData=[
+    [-3.1,-.2,7.5,1.25],[3.1,-.2,7.8,1.35],
+    [-5,-.2,11,1.7],[5,-.2,11,1.65],
+    [0,0,14,2],[-7,-.2,16,2],[7,-.2,16,2]
+  ];
+  for(const [x,y,z,s] of treeData){
+    sphere([x,y+.75*s,z],.28*s,[.34,.21,.12],0);
+    sphere([x,y+2*s,z],1.15*s,[.22,.45,.26],.02);
+    sphere([x+.48*s,y+2.45*s,z],.82*s,[.13,.34,.2],.02);
+  }
+  for(let i=0;i<18;i++){
+    const x=(i%6-2.5)*2.2, z=6+Math.floor(i/6)*3.2;
+    sphere([x,-.55,z],.65,[.22,.42,.24],0);
+  }
+
+  const planeY=-1;
+  const cameraPos=[0,2.3,-5.8];
+  const target=[0,.45,4.5];
+  const forward=norm(sub(target,cameraPos));
+  const right=norm([forward[2],0,-forward[0]]);
+  const up=norm([
+    right[1]*forward[2]-right[2]*forward[1],
+    right[2]*forward[0]-right[0]*forward[2],
+    right[0]*forward[1]-right[1]*forward[0]
+  ]);
+  
+  let shadowsOn=true, reflectionsOn=true, rayMode=true;
+  
+  // Configuración del Canvas para Ray Tracing
+  const rtWidth=320, rtHeight=200;
+  const rtCanvas=document.createElement('canvas');
+  rtCanvas.width=rtWidth; rtCanvas.height=rtHeight;
+  const rtCtx=rtCanvas.getContext('2d',{alpha:false});
+  const imageData=rtCtx.createImageData(rtWidth,rtHeight);
+  
+  // Textura para mapear el resultado en Three.js
+  const rtTexture = new THREE.CanvasTexture(rtCanvas);
+  rtTexture.colorSpace = THREE.SRGBColorSpace;
+  rtTexture.minFilter = THREE.NearestFilter; // Pixelado
+  rtTexture.magFilter = THREE.NearestFilter;
+  rtTexture.flipY = false; // IMPORTANTE: Evita que la imagen se voltee
+
+  const rtScene = new THREE.Scene();
+  const rtCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const rtMaterial = new THREE.MeshBasicMaterial({ map: rtTexture });
+  const rtPlane = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), rtMaterial);
+  rtScene.add(rtPlane);
+
+  function hitSphere(origin,dir,s){
+    const oc=sub(origin,s.c), b=dot(dir,oc), c=dot(oc,oc)-s.r*s.r;
+    const disc=b*b-c;
+    if(disc<0)return null;
+    let t=-b-Math.sqrt(disc);
+    if(t<.001)t=-b+Math.sqrt(disc);
+    if(t<.001)return null;
+    const p=add(origin,mul(dir,t));
+    return {t,p,n:norm(sub(p,s.c)),color:s.color,reflectivity:s.reflectivity};
+  }
+  
+  function trace(origin,dir){
+    let closest=null;
+    for(const s of spheres){
+      const h=hitSphere(origin,dir,s);
+      if(h&&(!closest||h.t<closest.t))closest=h;
+    }
+    if(Math.abs(dir[1])>1e-6){
+      const t=(planeY-origin[1])/dir[1];
+      if(t>.001&&(!closest||t<closest.t)){
+        const p=add(origin,mul(dir,t));
+        const checker=(Math.floor(p[0]*1.5)+Math.floor(p[2]*1.5))&1;
+        closest={t,p,n:[0,1,0],color:checker?[.28,.4,.23]:[.21,.32,.18],reflectivity:.28};
+      }
+    }
+    return closest;
+  }
+  
+  function isOccluded(point,normal){
+    const origin=add(point,mul(normal,.003));
+    for(const s of spheres) if(hitSphere(origin,lightDir,s)) return true;
+    if(Math.abs(lightDir[1])>1e-6){
+      const t=(planeY-origin[1])/lightDir[1];
+      if(t>.003)return true;
+    }
+    return false;
+  }
+  
+  function shade(hit,ray,depth=0){
+    if(!hit)return [.55,.72,.7];
+    let diffuse=Math.max(0,dot(hit.n,lightDir));
+    let shadeFactor=.2+.8*diffuse;
+    if(shadowsOn&&diffuse>0&&isOccluded(hit.p,hit.n))shadeFactor=.22;
+    let color=mul(hit.color,shadeFactor);
+
+    // Un solo rebote: calcula el rayo reflejado y su intersección.
+    if(reflectionsOn&&depth===0&&hit.reflectivity>0){
+      const reflected=norm(sub(ray,mul(hit.n,2*dot(ray,hit.n))));
+      const reflectedHit=trace(add(hit.p,mul(hit.n,.004)),reflected);
+      const reflectedColor=reflectedHit
+        ? shade(reflectedHit,reflected,1)
+        : [.55,.72,.7];
+      const amount=hit.reflectivity;
+      color=add(mul(color,1-amount),mul(reflectedColor,amount));
+    }
+    return color;
+  }
+  
+  function renderRayTracing(){
+    const aspect=rtWidth/rtHeight;
+    const fov=Math.tan(45 * Math.PI / 180 / 2);
     
-    <div id="ui">
-        <p><strong>RASTERIZACIÓN + Z-BUFFER</strong></p>
-        <p>Sombreado: Flat | Cámara: Perspectiva | Luz: Direccional</p>
-    </div>
+    for(let y=0;y<rtHeight;y++){
+      for(let x=0;x<rtWidth;x++){
+        // Cada píxel lanza un rayo primario desde la cámara.
+        const px=(2*(x+.5)/rtWidth-1)*aspect*fov;
+        const py=(1-2*(y+.5)/rtHeight)*fov;
+        const ray=norm(add(forward,add(mul(right,px),mul(up,py))));
+        const hit=trace(cameraPos,ray);
+        const color=shade(hit,ray);
+        const i=(y*rtWidth+x)*4;
+        imageData.data[i]=Math.max(0,Math.min(255,color[0]*255));
+        imageData.data[i+1]=Math.max(0,Math.min(255,color[1]*255));
+        imageData.data[i+2]=Math.max(0,Math.min(255,color[2]*255));
+        imageData.data[i+3]=255;
+      }
+    }
+    rtCtx.putImageData(imageData,0,0);
+    
+    // Actualizar la textura y renderizar en Three.js
+    rtTexture.needsUpdate = true;
+    renderer.render(rtScene, rtCamera);
+  }
 
-    <div id="panel">
-        <h3>Paso 1: Rasterización</h3>
-        <p><kbd>S</kbd> Sombras on/off &nbsp; <kbd>R</kbd> Resolución (Pixelado)</p>
-        <p id="info">Cargando...</p>
-        <table id="tabla">
-            <tr><th>Modo</th><th>Res.</th><th>Sombras</th><th>ms</th></tr>
-        </table>
-        <button class="btn-clear" onclick="document.getElementById('tabla').innerHTML='<tr><th>Modo</th><th>Res.</th><th>Sombras</th><th>ms</th></tr>'">Limpiar Tabla</button>
-    </div>
+  // ==========================================================
+  // CONTROLES
+  // ==========================================================
+  const modeBtn=document.getElementById('mode');
+  const shadowBtn=document.getElementById('shadows');
+  const reflectionBtn=document.getElementById('reflections');
 
-    <!-- Importar Three.js (Motor de Rasterización por GPU) -->
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-            }
-        }
-    </script>
+  function updateButtons(){
+    modeBtn.textContent='Modo: '+(rayMode?'Ray Tracing':'Rasterización');
+    modeBtn.classList.toggle('active',rayMode);
+    shadowBtn.textContent='Sombras: '+(shadowsOn?'activadas':'desactivadas');
+    shadowBtn.classList.toggle('active',shadowsOn);
+    reflectionBtn.textContent='Reflejos: '+(reflectionsOn?'activados':'desactivados');
+    reflectionBtn.classList.toggle('active',reflectionsOn);
+  }
+  
+  function draw(){
+    if(rayMode) {
+      renderRayTracing();
+    } else {
+      renderer.render(scene,camera);
+    }
+  }
+  
+  modeBtn.addEventListener('click',()=>{
+    rayMode=!rayMode;
+    updateButtons();
+    draw();
+  });
+  
+  shadowBtn.addEventListener('click',()=>{
+    shadowsOn=!shadowsOn;
+    sun.castShadow=shadowsOn;
+    renderer.shadowMap.needsUpdate=true;
+    updateButtons();
+    draw(); // Redibujar en ambos modos
+  });
+  
+  reflectionBtn.addEventListener('click',()=>{
+    reflectionsOn=!reflectionsOn;
+    updateButtons();
+    draw(); // Redibujar en ambos modos
+  });
 
-    <script type="module">
-        import * as THREE from 'three';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+  function resize(){
+    camera.aspect=innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight);
+    draw();
+  }
+  
+  addEventListener('resize',resize);
+  updateButtons();
+  draw();
 
-        // ==========================================
-        // 1. ESCENA BASE: CÁMARA
-        // ==========================================
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x222222);
-        scene.fog = new THREE.FogExp2(0x222222, 0.03); // Niebla para profundidad
-
-        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-        camera.position.set(0, 3, 10);
-
-        const renderer = new THREE.WebGLRenderer({ antialias: false }); // Antialias off para look retro
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.shadowMap.enabled = true; // Activa el Z-Buffer para sombras
-        document.body.appendChild(renderer.domElement);
-
-        const controls = new OrbitControls(camera, renderer.domElement);
-        controls.target.set(0, 1.5, 0);
-        controls.enableDamping = true;
-
-        // ==========================================
-        // 2. ESCENA BASE: LUCES
-        // ==========================================
-        // Luz ambiental (para que no haya zonas 100% negras)
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
-        scene.add(ambientLight);
-
-        // Luz direccional (crea el Sombreado Plano y las sombras del Z-Buffer)
-        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-        dirLight.position.set(5, 10, 5);
-        dirLight.castShadow = true;
-        scene.add(dirLight);
-
-        // ==========================================
-        // 3. ESCENA BASE: OBJETOS (Geometría Low-Poly)
-        // ==========================================
-        
-        // Material con SOMBREADO PLANO (Flat Shading) y colores de Yahu
-        const matCuerpo = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
-        const matRosa = new THREE.MeshLambertMaterial({ color: 0xe8a1c1, flatShading: true });
-        const matMorado = new THREE.MeshLambertMaterial({ color: 0x6b1d45, flatShading: true });
-
-        // Suelo
-        const floorGeo = new THREE.PlaneGeometry(50, 50);
-        const floorMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a, flatShading: true });
-        const floor = new THREE.Mesh(floorGeo, floorMat);
-        floor.rotation.x = -Math.PI / 2;
-        floor.receiveShadow = true;
-        scene.add(floor);
-
-        // Grupo del Personaje
-        const personaje = new THREE.Group();
-
-        // Cuerpo (Cono de 6 caras para que se vea el sombreado plano)
-        const cuerpoGeo = new THREE.ConeGeometry(1, 2.5, 6);
-        const cuerpo = new THREE.Mesh(cuerpoGeo, matMorado);
-        cuerpo.position.y = 1.25;
-        cuerpo.castShadow = true;
-        personaje.add(cuerpo);
-
-        // Cabeza (Esfera de pocos segmentos)
-        const cabezaGeo = new THREE.SphereGeometry(1, 6, 5);
-        const cabeza = new THREE.Mesh(cabezaGeo, matCuerpo);
-        cabeza.position.y = 3;
-        cabeza.castShadow = true;
-        personaje.add(cabeza);
-
-        // Cuernos
-        const cuernoGeo = new THREE.ConeGeometry(0.3, 1.5, 4);
-        const cuernoIzq = new THREE.Mesh(cuernoGeo, matRosa);
-        cuernoIzq.position.set(-0.6, 4, 0);
-        cuernoIzq.rotation.z = Math.PI / 4;
-        cuernoIzq.castShadow = true;
-        
-        const cuernoDer = new THREE.Mesh(cuernoGeo, matRosa);
-        cuernoDer.position.set(0.6, 4, 0);
-        cuernoDer.rotation.z = -Math.PI / 4;
-        cuernoDer.castShadow = true;
-
-        personaje.add(cuernoIzq);
-        personaje.add(cuernoDer);
-
-        // Alas laterales
-        const alaGeo = new THREE.ConeGeometry(1, 2.5, 4);
-        const alaIzq = new THREE.Mesh(alaGeo, matRosa);
-        alaIzq.position.set(-1.2, 2, 0);
-        alaIzq.rotation.z = Math.PI / 2.5;
-        alaIzq.scale.set(0.2, 1, 1);
-        alaIzq.castShadow = true;
-        personaje.add(alaIzq);
-
-        const alaDer = new THREE.Mesh(alaGeo, matRosa);
-        alaDer.position.set(1.2, 2, 0);
-        alaDer.rotation.z = -Math.PI / 2.5;
-        alaDer.scale.set(0.2, 1, 1);
-        alaDer.castShadow = true;
-        personaje.add(alaDer);
-
-        scene.add(personaje);
-
-        // ==========================================
-        // 4. BUCLE DE RENDERIZADO Y MEDICIÓN
-        // ==========================================
-        let sombrasGlobal = true;
-        let escala = 1; // 1 = Normal, 2 = Pixelado (Resolución baja)
-
-        function medirYRenderizar() {
-            const t0 = performance.now(); // Inicio del cronómetro
-            
-            // Renderizado (Rasterización + Z-Buffer)
-            renderer.render(scene, camera);
-            
-            const ms = (performance.now() - t0).toFixed(2); // Fin del cronómetro
-
-            const resString = `${renderer.domElement.width}×${renderer.domElement.height}`;
-
-            // Actualizar texto de la UI
-            document.getElementById('info').innerHTML = 
-                `<b>Rasterización + Z-Buffer</b> · ${resString} · sombras: ${sombrasGlobal?'sí':'no'} · <span class="ok">${ms} ms</span>`;
-            
-            // Añadir fila a la tabla
-            document.getElementById('tabla').insertAdjacentHTML('beforeend',
-                `<tr><td>Rasterización</td><td>${resString}</td><td>${sombrasGlobal?'Sí':'No'}</td><td>${ms}</td></tr>`);
-        }
-
-        // Controles de teclado
-        window.addEventListener('keydown', ev => {
-            if (ev.key === 's' || ev.key === 'S') {
-                sombrasGlobal = !sombrasGlobal;
-                renderer.shadowMap.enabled = sombrasGlobal;
-                scene.traverse((node) => {
-                    if (node.isMesh) {
-                        node.material.needsUpdate = true;
-                    }
-                });
-                medirYRenderizar();
-            }
-            else if (ev.key === 'r' || ev.key === 'R'){ 
-                // Arreglo de resolución: Alternamos el pixelRatio interno
-                escala = escala === 1 ? 0.5 : 1; 
-                renderer.setPixelRatio(window.devicePixelRatio * escala);
-                renderer.setSize(window.innerWidth, window.innerHeight);
-                medirYRenderizar();
-            }
-        });
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setPixelRatio(window.devicePixelRatio * escala);
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-
-        const clock = new THREE.Clock();
-
-        function animate() {
-            requestAnimationFrame(animate);
-            
-            const time = clock.getElapsedTime();
-
-            // Animación flotante
-            personaje.position.y = Math.sin(time * 2) * 0.1;
-            personaje.rotation.y = Math.sin(time * 0.5) * 0.3;
-
-            controls.update();
-            
-            // Renderizado del frame (NO medimos aquí para no saturar la tabla)
-            renderer.render(scene, camera);
-        }
-
-        // Iniciar
-        animate();
-        medirYRenderizar(); // Medir el primer frame al cargar
-
-    </script>
+} catch(error) {
+  console.error(error);
+  errorBox.style.display='block';
+}
+</script>
 </body>
 </html>
