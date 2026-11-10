@@ -29,22 +29,87 @@
             box-shadow: inset 0 0 100px rgba(0,0,0,0.8); /* Viñeta CRT */
         }
 
+        /* 2. INTERFAZ DE USUARIO (Panel de medición) */
         #ui {
             position: absolute;
-            bottom: 20px; left: 20px;
-            color: #a8a29e;
+            top: 20px; left: 20px;
+            color: #eee;
             font-family: monospace;
             z-index: 20;
-            text-shadow: 1px 1px 2px #000;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #444;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            pointer-events: auto; /* Permite hacer clic en los botones */
         }
+
+        #ui h3 { margin: 0 0 10px 0; color: #ffb3d9; font-size: 14px; }
+        
+        #ui label { display: block; margin-top: 8px; font-size: 12px; }
+        
+        #ui button {
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 4px 8px;
+            margin-right: 5px;
+            cursor: pointer;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        
+        #ui button:hover { background: #444; }
+
+        table {
+            border-collapse: collapse;
+            font-size: 12px;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        td, th {
+            border: 1px solid #444;
+            padding: 4px 6px;
+            text-align: center;
+        }
+
+        th { background: #222; color: #ffb3d9; }
+        .ok { color: #7f7; font-weight: bold; }
     </style>
 </head>
 <body>
 
     <div id="scanline-overlay"></div>
+    
     <div id="ui">
-        <p><strong>RASTERIZACIÓN + Z-BUFFER</strong></p>
-        <p>Sombreado: Flat | Cámara: Perspectiva | Luz: Direccional</p>
+        <h3>RASTERIZACIÓN + Z-BUFFER</h3>
+        <p style="margin:0 0 10px 0; font-size:11px; color:#aaa;">Sombreado: Flat | Cámara: Perspectiva</p>
+        
+        <label>Resolución:</label>
+        <div>
+            <button onclick="cambiarResolucion(1)">Baja</button>
+            <button onclick="cambiarResolucion(2)">Alta</button>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Técnica</th>
+                    <th>Res.</th>
+                    <th>ms</th>
+                    <th>FPS</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>GPU Raster</td>
+                    <td id="td-res">--</td>
+                    <td id="td-ms" class="ok">--</td>
+                    <td id="td-fps" class="ok">--</td>
+                </tr>
+            </tbody>
+        </table>
     </div>
 
     <!-- Importar Three.js (Motor de Rasterización por GPU) -->
@@ -66,14 +131,14 @@
         // ==========================================
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x222222);
-        scene.fog = new THREE.FogExp2(0x222222, 0.03); // Niebla para profundidad
+        scene.fog = new THREE.FogExp2(0x222222, 0.03); 
 
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
         camera.position.set(0, 3, 10);
 
-        const renderer = new THREE.WebGLRenderer({ antialias: false }); // Antialias off para look retro
+        const renderer = new THREE.WebGLRenderer({ antialias: false }); 
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.shadowMap.enabled = true; // Activa el Z-Buffer para sombras
+        renderer.shadowMap.enabled = true; 
         document.body.appendChild(renderer.domElement);
 
         const controls = new OrbitControls(camera, renderer.domElement);
@@ -83,21 +148,17 @@
         // ==========================================
         // 2. ESCENA BASE: LUCES
         // ==========================================
-        // Luz ambiental (para que no haya zonas 100% negras)
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
         scene.add(ambientLight);
 
-        // Luz direccional (crea el Sombreado Plano y las sombras del Z-Buffer)
         const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
         dirLight.position.set(5, 10, 5);
         dirLight.castShadow = true;
         scene.add(dirLight);
 
         // ==========================================
-        // 3. ESCENA BASE: OBJETOS (Geometría Low-Poly)
+        // 3. ESCENA BASE: OBJETOS
         // ==========================================
-        
-        // Material con SOMBREADO PLANO (Flat Shading) y colores de Yahu
         const matCuerpo = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
         const matRosa = new THREE.MeshLambertMaterial({ color: 0xe8a1c1, flatShading: true });
         const matMorado = new THREE.MeshLambertMaterial({ color: 0x6b1d45, flatShading: true });
@@ -113,14 +174,14 @@
         // Grupo del Personaje
         const personaje = new THREE.Group();
 
-        // Cuerpo (Cono de 6 caras para que se vea el sombreado plano)
+        // Cuerpo
         const cuerpoGeo = new THREE.ConeGeometry(1, 2.5, 6);
         const cuerpo = new THREE.Mesh(cuerpoGeo, matMorado);
         cuerpo.position.y = 1.25;
         cuerpo.castShadow = true;
         personaje.add(cuerpo);
 
-        // Cabeza (Esfera de pocos segmentos)
+        // Cabeza
         const cabezaGeo = new THREE.SphereGeometry(1, 6, 5);
         const cabeza = new THREE.Mesh(cabezaGeo, matCuerpo);
         cabeza.position.y = 3;
@@ -161,12 +222,34 @@
         scene.add(personaje);
 
         // ==========================================
-        // 4. BUCLE DE RENDERIZADO (RASTERIZACIÓN)
+        // 4. LÓGICA DE MEDICIÓN Y RESOLUCIÓN
+        // ==========================================
+        const tdRes = document.getElementById('td-res');
+        const tdMs = document.getElementById('td-ms');
+        const tdFps = document.getElementById('td-fps');
+
+        // Función global para los botones de resolución
+        window.cambiarResolucion = function(escala) {
+            const nuevoAncho = window.innerWidth * escala;
+            const nuevoAlto = window.innerHeight * escala;
+            renderer.setSize(nuevoAncho, nuevoAlto, false); // false para no cambiar el CSS, solo el buffer interno
+            tdRes.textContent = `${nuevoAncho}×${nuevoAlto}`;
+        };
+        
+        // Inicializar texto de resolución
+        tdRes.textContent = `${window.innerWidth}×${window.innerHeight}`;
+
+        let lastTime = performance.now();
+        let frames = 0;
+
+        // ==========================================
+        // 5. BUCLE DE RENDERIZADO (CON MEDICIÓN)
         // ==========================================
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            tdRes.textContent = `${window.innerWidth}×${window.innerHeight}`;
         });
 
         const clock = new THREE.Clock();
@@ -182,10 +265,28 @@
 
             controls.update();
             
-            // El motor de Three.js hace la Rasterización y aplica el Z-Buffer automáticamente aquí
+            // --- MEDICIÓN DEL TIEMPO DE RENDERIZADO (ms) ---
+            const t0 = performance.now();
+            
+            // El motor de Three.js hace la Rasterización y aplica el Z-Buffer aquí
             renderer.render(scene, camera);
-        }
+            
+            const t1 = performance.now();
+            const msRender = (t1 - t0).toFixed(2); // Tiempo en milisegundos
+            
+            // --- CÁLCULO DE FPS ---
+            frames++;
+            if (t1 - lastTime >= 1000) {
+                const fps = Math.round((frames * 1000) / (t1 - lastTime));
+                tdFps.textContent = fps;
+                frames = 0;
+                lastTime = t1;
+            }
 
+            // Actualizar tabla cada frame
+            tdMs.textContent = msRender;
+        }
+        
         animate();
     </script>
 </body>
