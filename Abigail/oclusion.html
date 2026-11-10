@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Escena: Rasterización, Z-Buffer y Oclusión Ambiental</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #111;
+        }
+        
+        /* 1. EFECTO SCANLINE (Capa CSS sobre el canvas) */
+        #scanline-overlay {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0,0,0,0.4) 50%,
+                rgba(0,0,0,0.4)
+            );
+            background-size: 100% 4px;
+            z-index: 10;
+            box-shadow: inset 0 0 100px rgba(0,0,0,0.8); /* Viñeta CRT */
+        }
+
+        #ui {
+            position: absolute;
+            bottom: 20px; left: 20px;
+            color: #a8a29e;
+            font-family: monospace;
+            z-index: 20;
+            text-shadow: 1px 1px 2px #000;
+        }
+
+        /* Panel de medición y controles */
+        #panel {
+            position: absolute;
+            top: 20px; left: 20px;
+            background: rgba(30, 30, 30, 0.9);
+            color: #eee;
+            font-family: system-ui, sans-serif;
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid #444;
+            width: 320px;
+            z-index: 20;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+        #panel h3 { margin-top: 0; color: #a7c957; border-bottom: 1px solid #444; padding-bottom: 8px; }
+        kbd { background: #333; border: 1px solid #555; border-radius: 3px; padding: 2px 6px; font-size: 12px;}
+        table { border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 13px; }
+        td, th { border: 1px solid #444; padding: 6px; text-align: center; }
+        th { background: #333; color: #fff; }
+        .ok { color: #7f7; font-weight: bold; }
+        .btn-clear { width: 100%; margin-top: 10px; background: #552222; border: 1px solid #883333; color: #fff; padding: 8px; border-radius: 4px; cursor: pointer; font-family: system-ui, sans-serif; }
+        .btn-clear:hover { background: #773333; }
+        .control-group { margin: 10px 0; display: flex; align-items: center; justify-content: space-between; }
+        input[type=range] { width: 120px; }
+    </style>
+</head>
+<body>
+
+    <div id="scanline-overlay"></div>
+    
+    <div id="ui">
+        <p><strong>RASTERIZACIÓN + Z-BUFFER + OCLUSIÓN AMBIENTAL</strong></p>
+        <p>Sombreado: Flat | Cámara: Perspectiva | Muestreo de Muestras en Hemisferio</p>
+    </div>
+
+    <div id="panel">
+        <h3>Paso: Oclusión Ambiental (SSAO)</h3>
+        <p><kbd>S</kbd> Sombras &nbsp; <kbd>R</kbd> Res. &nbsp; <kbd>A</kbd> AO On/Off</p>
+        
+        <div class="control-group">
+            <label for="samplesSlider">Muestras AO (<kbd>↑</kbd>/<kbd>↓</kbd>): <b id="sampleCountVal">16</b></label>
+            <input type="range" id="samplesSlider" min="4" max="64" step="4" value="16">
+        </div>
+
+        <p id="info">Cargando...</p>
+        <table id="tabla">
+            <tr><th>Modo</th><th>Res.</th><th>Sombras</th><th>Muestras AO</th><th>ms</th></tr>
+        </table>
+        <button class="btn-clear" onclick="document.getElementById('tabla').innerHTML='<tr><th>Modo</th><th>Res.</th><th>Sombras</th><th>Muestras AO</th><th>ms</th></tr>'">Limpiar Tabla</button>
+    </div>
+
+    <!-- Importar Three.js y Post-Procesado Postprocessing / SSAO -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
+
+        // ==========================================
+        // 1. ESCENA BASE: CÁMARA Y RENDERER
+        // ==========================================
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x222222);
+        scene.fog = new THREE.FogExp2(0x222222, 0.03);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 3, 10);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 1.5, 0);
+        controls.enableDamping = true;
+
+        // ==========================================
+        // 2. CONFIGURACIÓN DE POST-PROCESADO Y SSAO
+        // ==========================================
+        const composer = new EffectComposer(renderer);
+        const renderPass = new RenderPass(scene, camera);
+        composer.addPass(renderPass);
+
+        const ssaoPass = new SSAOPass(scene, camera, window.innerWidth, window.innerHeight);
+        ssaoPass.kernelRadius = 0.8;      // Radio del hemisferio de muestreo
+        ssaoPass.minDistance = 0.005;     // Distancia mínima para detectar oclusión
+        ssaoPass.maxDistance = 0.1;       // Distancia máxima de alcance
+        ssaoPass.kernelSize = 16;         // Muestras iniciales
+        composer.addPass(ssaoPass);
+
+        // ==========================================
+        // 3. LUCES
+        // ==========================================
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(5, 10, 5);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // ==========================================
+        // 4. OBJETOS (Geometría Low-Poly)
+        // ==========================================
+        const matCuerpo = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
+        const matRosa = new THREE.MeshLambertMaterial({ color: 0xe8a1c1, flatShading: true });
+        const matMorado = new THREE.MeshLambertMaterial({ color: 0x6b1d45, flatShading: true });
+
+        // Suelo
+        const floorGeo = new THREE.PlaneGeometry(50, 50);
+        const floorMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a, flatShading: true });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.receiveShadow = true;
+        scene.add(floor);
+
+        // Grupo del Personaje
+        const personaje = new THREE.Group();
+
+        // Cuerpo
+        const cuerpoGeo = new THREE.ConeGeometry(1, 2.5, 6);
+        const cuerpo = new THREE.Mesh(cuerpoGeo, matMorado);
+        cuerpo.position.y = 1.25;
+        cuerpo.castShadow = true;
+        personaje.add(cuerpo);
+
+        // Cabeza
+        const cabezaGeo = new THREE.SphereGeometry(1, 6, 5);
+        const cabeza = new THREE.Mesh(cabezaGeo, matCuerpo);
+        cabeza.position.y = 3;
+        cabeza.castShadow = true;
+        personaje.add(cabeza);
+
+        // Cuernos
+        const cuernoGeo = new THREE.ConeGeometry(0.3, 1.5, 4);
+        const cuernoIzq = new THREE.Mesh(cuernoGeo, matRosa);
+        cuernoIzq.position.set(-0.6, 4, 0);
+        cuernoIzq.rotation.z = Math.PI / 4;
+        cuernoIzq.castShadow = true;
+        
+        const cuernoDer = new THREE.Mesh(cuernoGeo, matRosa);
+        cuernoDer.position.set(0.6, 4, 0);
+        cuernoDer.rotation.z = -Math.PI / 4;
+        cuernoDer.castShadow = true;
+
+        personaje.add(cuernoIzq);
+        personaje.add(cuernoDer);
+
+        // Alas laterales
+        const alaGeo = new THREE.ConeGeometry(1, 2.5, 4);
+        const alaIzq = new THREE.Mesh(alaGeo, matRosa);
+        alaIzq.position.set(-1.2, 2, 0);
+        alaIzq.rotation.z = Math.PI / 2.5;
+        alaIzq.scale.set(0.2, 1, 1);
+        alaIzq.castShadow = true;
+        personaje.add(alaIzq);
+
+        const alaDer = new THREE.Mesh(alaGeo, matRosa);
+        alaDer.position.set(1.2, 2, 0);
+        alaDer.rotation.z = -Math.PI / 2.5;
+        alaDer.scale.set(0.2, 1, 1);
+        alaDer.castShadow = true;
+        personaje.add(alaDer);
+
+        scene.add(personaje);
+
+        // ==========================================
+        // 5. BUCLE DE RENDERIZADO Y MEDICIÓN
+        // ==========================================
+        let sombrasGlobal = true;
+        let escala = 1;
+        let aoActivo = true;
+
+        function medirYRenderizar() {
+            const t0 = performance.now();
+            
+            if (aoActivo) {
+                composer.render();
+            } else {
+                renderer.render(scene, camera);
+            }
+            
+            const ms = (performance.now() - t0).toFixed(2);
+            const resString = `${renderer.domElement.width}×${renderer.domElement.height}`;
+            const numMuestras = aoActivo ? ssaoPass.kernelSize : 0;
+
+            document.getElementById('info').innerHTML = 
+                `<b>AO Hemisférico</b> · ${resString} · Muestras: ${numMuestras} · <span class="ok">${ms} ms</span>`;
+            
+            document.getElementById('tabla').insertAdjacentHTML('beforeend',
+                `<tr><td>Raster + AO</td><td>${resString}</td><td>${sombrasGlobal?'Sí':'No'}</td><td>${numMuestras}</td><td>${ms}</td></tr>`);
+        }
+
+        // Actualización de UI y número de muestras
+        const samplesSlider = document.getElementById('samplesSlider');
+        const sampleCountVal = document.getElementById('sampleCountVal');
+
+        function setKernelSize(val) {
+            val = Math.max(4, Math.min(64, val));
+            ssaoPass.kernelSize = val;
+            samplesSlider.value = val;
+            sampleCountVal.innerText = val;
+            medirYRenderizar();
+        }
+
+        samplesSlider.addEventListener('input', (e) => {
+            setKernelSize(parseInt(e.target.value));
+        });
+
+        // Controles de teclado
+        window.addEventListener('keydown', ev => {
+            if (ev.key === 's' || ev.key === 'S') {
+                sombrasGlobal = !sombrasGlobal;
+                renderer.shadowMap.enabled = sombrasGlobal;
+                scene.traverse((node) => {
+                    if (node.isMesh) {
+                        node.material.needsUpdate = true;
+                    }
+                });
+                medirYRenderizar();
+            }
+            else if (ev.key === 'r' || ev.key === 'R') { 
+                escala = escala === 1 ? 0.5 : 1; 
+                const width = window.innerWidth;
+                const height = window.innerHeight;
+                renderer.setPixelRatio(window.devicePixelRatio * escala);
+                renderer.setSize(width, height);
+                composer.setSize(width * escala, height * escala);
+                medirYRenderizar();
+            }
+            else if (ev.key === 'a' || ev.key === 'A') {
+                aoActivo = !aoActivo;
+                ssaoPass.enabled = aoActivo;
+                medirYRenderizar();
+            }
+            else if (ev.key === 'ArrowUp') {
+                setKernelSize(ssaoPass.kernelSize + 4);
+            }
+            else if (ev.key === 'ArrowDown') {
+                setKernelSize(ssaoPass.kernelSize - 4);
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setPixelRatio(window.devicePixelRatio * escala);
+            renderer.setSize(width, height);
+            composer.setSize(width * escala, height * escala);
+        });
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const time = clock.getElapsedTime();
+
+            personaje.position.y = Math.sin(time * 2) * 0.1;
+            personaje.rotation.y = Math.sin(time * 0.5) * 0.3;
+
+            controls.update();
+            
+            if (aoActivo) {
+                composer.render();
+            } else {
+                renderer.render(scene, camera);
+            }
+        }
+
+        // Iniciar
+        animate();
+        medirYRenderizar();
+
+    </script>
+</body>
+</html>
